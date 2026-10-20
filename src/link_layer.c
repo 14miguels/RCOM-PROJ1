@@ -207,8 +207,9 @@ int llOpenRx(LinkLayer llParameters)
     }State ;
 
     State state = initial_state;
+    int stop = FALSE;
 
-    while (STOP == FALSE)
+    while (stop == FALSE)
     {
         // Read one byte from serial port.
         // NOTE: You must check how many bytes were actually read by reading the return value.
@@ -222,26 +223,36 @@ int llOpenRx(LinkLayer llParameters)
         switch (state){
 
             case (initial_state): 
-                state = address_state;
+                if (var == 0x7E)
+                    state = address_state;
                 break;
             case (address_state):
-                state = control_state;
+                if (var == 0x03)
+                    state = control_state;
+                else if (var != 0x7E)
+                    state = initial_state;  
                 break;
             case (control_state):
-                state = bcc1_state;
+                if (var == 0x03)
+                    state = bcc1_state;
+                else if (var == 0x7E)
+                    state = address_state;
+                else
+                    state = initial_state;
                 break;
             case (bcc1_state):
-                state = final_state;
+                if (var == (0x03 ^ 0x03))
+                    state = final_state;
+                else if (var == 0x7E)
+                    state = address_state;
+                else
+                    state = initial_state;
                 break;
             case (final_state):
-                break;
-        }
-        
-
-        if (state == final_state)
-        {
-            printf("Final state. Stop reading from serial port.\n");
-            STOP = TRUE;
+                if (var == 0x7E)
+                    state = address_state;
+                else
+                    stop = TRUE;
         }
     }
 
