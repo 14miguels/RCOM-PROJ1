@@ -250,9 +250,10 @@ int llOpenRx(LinkLayer llParameters)
                 break;
             case (final_state):
                 if (var == 0x7E)
-                    state = address_state;
-                else
                     stop = TRUE;
+                else
+                    state = initial_state;
+                break;
         }
     }
 
