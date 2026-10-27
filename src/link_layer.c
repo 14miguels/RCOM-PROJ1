@@ -263,6 +263,10 @@ int llOpenRx(LinkLayer llParameters)
                     stop = TRUE;
                 else
                     state = initial_state;
+<<<<<<< HEAD
+=======
+                break;
+>>>>>>> origin/Miguel
         }
     }
 
