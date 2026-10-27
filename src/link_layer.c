@@ -190,13 +190,6 @@ int llOpenRx(LinkLayer llParameters)
     }
 
     printf("Serial port %s opened\n", llParameters.serialPort);
-
-    // Read from serial port until the 'z' char is received.
-
-    // NOTE: This while() cycle is a simple example showing how to read from the serial port.
-    // It must be changed in order to respect the specifications of the protocol indicated in the Lab guide.
-    // TODO: Save the received bytes in a buffer array and print it at the end of the program.
-    
     int nBytesBuf = 0;
 
     typedef enum {
@@ -212,9 +205,6 @@ int llOpenRx(LinkLayer llParameters)
 
     while (stop == FALSE)
     {
-        // Read one byte from serial port.
-        // NOTE: You must check how many bytes were actually read by reading the return value.
-        // In this example, we assume that the byte is always read, which may not be true.
         unsigned char var;
         int bytes = readByteSerialPort(&var);
 
@@ -267,10 +257,7 @@ int llOpenRx(LinkLayer llParameters)
                     stop = TRUE;
                 else
                     state = initial_state;
-<<<<<<< HEAD
-=======
                 break;
->>>>>>> origin/Miguel
         }
     }
 
