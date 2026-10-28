@@ -20,6 +20,8 @@ volatile sig_atomic_t alarmCount = 0;
 int txSequenceNum = 0;
 int txTimeout = 0;
 int txMaxRet = 0;
+int rxTimeout = 0;
+int rxMaxRet = 0;
 
 // Link layer state
 static int expected_Ns = 0;
@@ -183,6 +185,9 @@ int llOpenTx(LinkLayer llParameters)
 
 int llOpenRx(LinkLayer llParameters)
 {
+    rxTimeout = llParameters.timeout;
+    rxMaxRet = llParameters.nRetransmissions;
+
     if (openSerialPort(llParameters.serialPort, llParameters.baudRate) < 0)
     {
         perror("openSerialPort");
@@ -407,10 +412,10 @@ int llSend(const unsigned char *buf, int bufSize)
             case initial_state:
                 if (var == 0x7E)
                     state = address_state;
-                    else {
-                        state = initial_state;
-                        
-                    }
+                else {
+                    state = initial_state;
+                    
+                }
                 break;
     
             case address_state:
@@ -471,14 +476,14 @@ int llSend(const unsigned char *buf, int bufSize)
                         state = initial_state;
 
                     }
-                    else {
-                        if ((responseType == 1 && var == 0xA9)||    // 0x03 ^ 0xAA
-                            (responseType == 2 && var == 0x56))     // 0x03 ^ 0x55
-                            state = final_state;
-                        else if(var == 0x7E)
-                            state = address_state;
-                        else
-                            state = initial_state;
+                else {
+                    if ((responseType == 1 && var == 0xA9)||    // 0x03 ^ 0xAA
+                        (responseType == 2 && var == 0x56))     // 0x03 ^ 0x55
+                        state = final_state;
+                    else if(var == 0x7E)
+                        state = address_state;
+                    else
+                        state = initial_state;
 
                 }
                 break;
@@ -700,7 +705,169 @@ int llCloseTx()
 
 int llCloseRx()
 {
-    // TODO: Implement this function
+    typedef enum {
+        initial_state,
+        address_state,
+        control_state,
+        bcc1_state,
+        final_state
+    } State;
 
+    State state = initial_state;
+    int discReceived = FALSE;
+
+    // Receber DISC vindo do Tx
+    printf("llCloseRx: Waiting for DISC from Tx...\n");
+    while (discReceived == FALSE)
+    {
+        unsigned char var;
+        int bytes = readByteSerialPort(&var);
+        if (bytes == -1 && errno == EINTR)
+            continue;
+
+        if (bytes != 1)
+        {
+            closeSerialPort();
+            return -1;
+        }
+
+        switch (state)
+        {
+            case initial_state:
+                if (var == 0x7E)
+                    state = address_state;
+                break;
+            case address_state:
+                if (var == 0x03)             // DISC do Tx tem A = 0x03
+                    state = control_state;
+                else if (var != 0x7E)
+                    state = initial_state;
+                break;
+            case control_state:
+                if (var == 0x0B)             // C = DISC (0x0B)
+                    state = bcc1_state;
+                else if (var == 0x7E)
+                    state = address_state;
+                else
+                    state = initial_state;
+                break;
+            case bcc1_state:
+                if (var == (0x03 ^ 0x0B))    // BCC1 = 0x08
+                    state = final_state;
+                else if (var == 0x7E)
+                    state = address_state;
+                else
+                    state = initial_state;
+                break;
+            case final_state:
+                if (var == 0x7E)
+                    discReceived = TRUE;
+                else
+                    state = initial_state;
+                break;
+        }
+    }
+
+    // Enviar DISC do Rx para o Tx e esperar UA do Tx
+    struct sigaction act = {0};
+    act.sa_handler = &alarmHandler;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    if (sigaction(SIGALRM, &act, NULL) == -1)
+    {
+        perror("sigaction");
+        closeSerialPort();
+        return -1;
+    }
+
+    // DISC enviado pelo Rx: A = 0x01, C = 0x0B, BCC1 = 0x01 ^ 0x0B = 0x0A
+    unsigned char discFrameRx[5] = {0x7E, 0x01, 0x0B, 0x0A, 0x7E};
+    int uaReceived = FALSE;
+    alarmCount = 0;
+    alarmEnabled = FALSE;
+
+    while (alarmCount <= rxMaxRet && uaReceived == FALSE)
+    {
+        printf("llCloseRx: Sending DISC - Attempt %d\n", alarmCount + 1);
+        if (writeBytesSerialPort(discFrameRx, 5) != 5)
+        {
+            closeSerialPort();
+            return -1;
+        }
+
+        alarmEnabled = TRUE;
+        alarm(rxTimeout > 0 ? rxTimeout : 4);
+
+        state = initial_state;
+        while (alarmEnabled == TRUE && uaReceived == FALSE)
+        {
+            unsigned char var;
+            int bytes = readByteSerialPort(&var);
+            if (bytes != 1)
+            {
+                if (alarmEnabled == FALSE)
+                    break;
+                if (bytes < 0 && errno == EINTR)
+                    continue;
+                alarm(0);
+                closeSerialPort();
+                return -1;
+            }
+
+            // Esperar UA do Tx: A = 0x01, C = 0x07, BCC1 = 0x01 ^ 0x07 = 0x06
+            switch (state)
+            {
+                case initial_state:
+                    if (var == 0x7E)
+                        state = address_state;
+                    break;
+                case address_state:
+                    if (var == 0x01)         // Resposta UA enviada pelo Tx usa A = 0x01
+                        state = control_state;
+                    else if (var != 0x7E)
+                        state = initial_state;
+                    break;
+                case control_state:
+                    if (var == 0x07)         // UA (0x07)
+                        state = bcc1_state;
+                    else if (var == 0x7E)
+                        state = address_state;
+                    else
+                        state = initial_state;
+                    break;
+                case bcc1_state:
+                    if (var == (0x01 ^ 0x07)) // BCC1 = 0x06
+                        state = final_state;
+                    else if (var == 0x7E)
+                        state = address_state;
+                    else
+                        state = initial_state;
+                    break;
+                case final_state:
+                    if (var == 0x7E)
+                    {
+                        uaReceived = TRUE;
+                        alarm(0);
+                        alarmEnabled = FALSE;
+                    }
+                    else
+                        state = initial_state;
+                    break;
+            }
+        }
+    }
+
+    alarm(0);
+    if (uaReceived == FALSE)
+    {
+        printf("llCloseRx: Exceeded max retries waiting for UA.\n");
+        closeSerialPort();
+        return -1;
+    }
+
+    // Fechar a porta série
+    printf("llCloseRx: Connection closed successfully.\n");
+    if (closeSerialPort() < 0)
+        return -1;
     return 0;
 }
