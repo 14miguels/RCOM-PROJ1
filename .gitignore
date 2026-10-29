@@ -1,2 +1,3 @@
 penguin-received.gif
 *.o
+tests/build/
